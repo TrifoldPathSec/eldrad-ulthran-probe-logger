@@ -1,0 +1,30 @@
+[
+  {
+    "label": "Transit hub",
+    "lat": 45.5289,
+    "lon": -122.6768,
+    "pcap": "pcap/session1.pcap",
+    "salt_hex": "d8d29db032993274498c86aaebf9a54a"
+  },
+  {
+    "label": "Public square",
+    "lat": 45.5189,
+    "lon": -122.6793,
+    "pcap": "pcap/session2.pcap",
+    "salt_hex": "d807cbb77536e45e819034aa5926bbea"
+  },
+  {
+    "label": "Waterfront market",
+    "lat": 45.5225,
+    "lon": -122.6705,
+    "pcap": "pcap/session3.pcap",
+    "salt_hex": "f960ff406672bf7285b2b5c4b542829e"
+  },
+  {
+    "label": "Campus park blocks",
+    "lat": 45.5115,
+    "lon": -122.6835,
+    "pcap": "pcap/session4.pcap",
+    "salt_hex": "d8133ce6c5dd2dcdb9eb3c084db06b6b"
+  }
+]
