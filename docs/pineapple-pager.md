@@ -2,62 +2,95 @@
 
 The Pager records the frames and `eldrad ingest` does the analysis on your laptop. The Pager only listens.
 
-> **Status:** these steps use standard OpenWrt tools (`iw`, `tcpdump`, `scp`). They haven't been run on a Pager yet. Interface names and the loot path can differ between firmware versions, so check them on your device first.
+> **Status:** tested on 2026-10-22 on a Pager running firmware **24.10.1** (OpenWrt 24.10, `ramips/mt76x8`, mipsel). A 5-minute capture gave 334 probe requests, all with RSSI and channel, parsed with no errors. Other firmware versions may name things differently, so check step 2's output on yours.
 
-## 0. Keep it passive
+## 1. Connect over USB-C, not WiFi
 
-The Pager can do more than listen. For this project, leave every active feature **off**: PineAP / Evil-Twin / Karma-style SSID impersonation, deauthentication, beacon spoofing, and client association. A probe-request survey doesn't need any of them, and using them on networks you don't own is illegal in most places.
+Joining the Pager's management WiFi drops your laptop's internet. Use the cable instead: the Pager shows up on the Mac as a **USB 10/100/1000 LAN** interface (MAC prefix `00:13:37`, Hak5), hands out a `172.16.52.x` address, and sits at **`172.16.52.1`**. Your WiFi stays connected.
 
-## 1. Find the monitor interface
+If web pages stall while the Pager is plugged in, it's because the Pager also advertises a default route. Fix it in **System Settings → Network → … → Set Service Order** by dragging Wi-Fi above the USB LAN.
 
-Connect to the Pager (USB-C ethernet or its management AP) and SSH in:
+Optional: key-based SSH, so scripts can connect without a password prompt:
 
-```sh
-ssh root@172.16.42.1        # default Hak5 management address; yours may differ
-iw dev                      # look for an interface with "type monitor" (e.g. wlan1mon)
+```bash
+ssh-keygen -t ed25519 -f ~/.ssh/pager_ed25519 -N "" -C "eldrad-pager-lab"
+ssh root@172.16.52.1 'mkdir -p /root/.ssh /etc/dropbear; cat >> /root/.ssh/authorized_keys; cp /root/.ssh/authorized_keys /etc/dropbear/authorized_keys 2>/dev/null; chmod 700 /root/.ssh; chmod 600 /root/.ssh/authorized_keys /etc/dropbear/authorized_keys' < ~/.ssh/pager_ed25519.pub
+alias pager='ssh -i ~/.ssh/pager_ed25519 root@172.16.52.1'
 ```
 
-If no monitor interface exists, create one on a radio the Pager isn't using for management:
+## 2. Look before you capture
 
 ```sh
-iw dev wlan1 interface add wlan1mon type monitor
-ip link set wlan1mon up
+cat /etc/openwrt_release        # firmware
+iw dev                          # monitor interfaces
+which tcpdump                   # preinstalled on 24.10.1
+df -h /mmc                      # microSD storage, use it for pcaps
 ```
 
-## 2. Record only probe requests
+On the tested unit, two monitor interfaces already existed, so none needed creating:
+
+| Interface | Radio | Behaviour under pineapd |
+|---|---|---|
+| `wlan0mon` | phy0 | fixed on channel 1 |
+| `wlan1mon` | phy1 | hops 2.4 / 5 / 6 GHz quickly (pineapd recon) |
+
+## 3. Make it passive: turn PineAP off
+
+**Check this every time.** On the tested unit, PineAP was **enabled**. It was broadcasting beacons from an SSID pool that `autossidpool` had filled automatically with network names harvested from nearby devices' probe requests. That's active impersonation, and the harvested pool is bystander data. Check and fix it:
 
 ```sh
-which tcpdump || { opkg update && opkg install tcpdump; }
-mkdir -p /root/loot/eldrad
-tcpdump -i wlan1mon -s 0 -w /root/loot/eldrad/probes-$(date +%Y%m%d-%H%M).pcap \
-        'type mgt subtype probe-req'
+uci -q get pineapd.@hostapd[0].pineap_disabled      # want 1
+uci -q get pineapd.@pineapd[0].autossidpool         # want 0
+uci -q get pineapd.@ssidpool[0].ssid | wc -w        # harvested pool size, want 0
+
+uci set pineapd.@hostapd[0].pineap_disabled=1
+uci set pineapd.@pineapd[0].autossidpool=0
+uci -q delete pineapd.@ssidpool[0].ssid             # clears the harvested pool
+uci commit pineapd
+/etc/init.d/pineapd restart
+iw dev | grep type                                  # only monitor + managed, no AP
 ```
 
-The BPF filter drops everything except probe requests at capture time, so data frames and other traffic never reach the file.
+pineapd's recon mode is passive: it listens, hops `wlan1mon`, and logs APs and handshakes to `/root/loot`. It stays on to do the channel hopping. Leave deauth and other attack payloads alone.
 
-**Channel hopping:** if the Pager's recon engine is already hopping that radio, leave it alone. Otherwise, run a simple hopper in a second shell:
+## 4. Record only probe requests
 
 ```sh
-while true; do for c in 1 6 11 2 7 3 8 4 9 5 10; do iw dev wlan1mon set channel $c; sleep 0.5; done; done
+mkdir -p /mmc/eldrad; T=$(date +%Y%m%d-%H%M)
+for i in wlan0mon wlan1mon; do
+  tcpdump -i $i -s 0 -G 300 -W 1 -w /mmc/eldrad/probes-$i-$T.pcap 'type mgt subtype probe-req' &
+done; wait
 ```
 
-`eldrad` reads each frame's channel from its RadioTap header, so hopping doesn't need any other bookkeeping.
+- The BPF filter drops everything except probe requests at capture time.
+- `-G 300 -W 1` stops after 5 minutes, at the first packet after the mark.
+- Expect `wlan0mon` (parked on channel 1) to collect far more than the hopping `wlan1mon`. In the test it was 316 frames vs 18, because most clients probe on 2.4 GHz and the hopper spends only a moment on each channel.
+- `eldrad` reads each frame's channel from RadioTap, so no hop bookkeeping is needed.
 
-## 3. Note where you were
+## 5. Note where you were
 
-The Pager has no GPS. Write down a lat/lon for each capture (from your phone's map app). That becomes the session's fixed location.
+The Pager's gpsd config exists, but without a GPS attached, write down a lat/lon from your phone for each capture. That becomes the session's fixed location.
 
-## 4. Copy back and ingest
+## 6. Copy back and ingest
 
-```sh
-scp root@172.16.42.1:/root/loot/eldrad/probes-*.pcap captures/
-.venv/bin/python -m eldrad ingest captures/probes-20261022-1430.pcap \
-    --label "Coffee shop" --lat 45.5231 --lon -122.6765
+```bash
+scp -O -i ~/.ssh/pager_ed25519 'root@172.16.52.1:/mmc/eldrad/*.pcap' captures/
+.venv/bin/python -m eldrad ingest captures/probes-wlan0mon-*.pcap --label "Coffee shop ch1" --lat 45.5231 --lon -122.6765
+.venv/bin/python -m eldrad ingest captures/probes-wlan1mon-*.pcap --label "Coffee shop hop" --lat 45.5231 --lon -122.6765
+.venv/bin/python -m eldrad stats
 .venv/bin/python -m eldrad map --out captures/map.html
 ```
 
-For several captures, write a `sessions.json` like [`samples/sessions.json`](../samples/sessions.json) (leave out `salt_hex` so each session gets a random salt) and run `ingest --manifest`.
+`-O` makes `scp` use the classic SCP protocol, which worked against the Pager's SSH server. `captures/` is git-ignored.
 
-## 5. Clean up
+## 7. Clean up
 
-The pcap on the Pager and in `captures/` holds **real MACs**. The database only holds salted tokens. Once ingested, delete the pcaps from both places unless you have a reason to keep them.
+The pcaps on the Pager and in `captures/` hold **real MACs and SSIDs**. The database only holds salted tokens (SSIDs are kept as heard). Once ingested:
+
+```sh
+rm /mmc/eldrad/*.pcap            # on the Pager
+```
+
+```bash
+rm captures/probes-*.pcap        # on the laptop
+```

@@ -15,7 +15,7 @@ Author: @alex_mh · Part of the [TrifoldPathSec](https://github.com/TrifoldPathS
 ## What it does
 
 - **Captures** 802.11 probe request frames (management type 0, subtype 4). It only receives:
-  - **Offline**: ingest a pcap recorded on a Hak5 WiFi Pineapple Pager ([how](docs/pineapple-pager.md)).
+  - **Offline (tested)**: ingest a pcap recorded on a Hak5 WiFi Pineapple Pager over USB-C, after switching PineAP off ([how](docs/pineapple-pager.md)).
   - **Live**: sniff on a Linux monitor-mode interface (Raspberry Pi + USB adapter, or a Kali box) with channel hopping and a monitor-mode setup helper ([how](docs/live-capture-linux.md)).
 - **Records**, for each frame: timestamp, a salted MAC token, the requested SSID (empty = broadcast probe), RSSI from the RadioTap header, channel, and whether the MAC is locally administered (randomized).
 - **Stores** everything in SQLite, with CSV export.
@@ -209,8 +209,8 @@ The tests cover probe parsing (FCS frames, 5 GHz, broadcast SSIDs, non-probe fra
 ## Status and limits
 
 - The pcap ingest, storage, stats and map are tested end to end on synthetic pcaps.
-- Live capture, channel hopping and the monitor helper are written for Linux but **haven't been run on hardware yet**. My kit doesn't have a Pi or a standalone adapter at the moment.
-- The Pineapple Pager steps follow standard OpenWrt tooling and **haven't been checked on the device yet**; [the doc](docs/pineapple-pager.md) says what to verify.
+- Live Linux capture, its channel hopper and the monitor helper **haven't been run on hardware yet**. My kit doesn't have a Pi or a standalone adapter at the moment.
+- The Pineapple Pager path is **tested on hardware** (firmware 24.10.1, 2026-10-22): a 5-minute capture over USB-C gave 334 probe requests with RSSI and channel on every frame. See [the guide](docs/pineapple-pager.md).
 - No IE fingerprinting or sequence-number linking yet. Those are the obvious next steps for showing how randomization gets defeated.
 
 ## License
